@@ -3,6 +3,22 @@
 #include "fcntl.h"
 #include "user.h"
 #include "x86.h"
+#include "mmu.h"
+
+int lock_init(lock_t *lk)
+{
+  lk->flag = 0;
+  return 0;
+}
+
+void lock_acquire(lock_t *lk){
+  while(xchg(&lk->flag, 1) != 0)
+      ;
+}
+
+void lock_release(lock_t *lk){
+  xchg(&lk->flag, 0);
+}
 
 char*
 strcpy(char *s, const char *t)
@@ -104,3 +120,28 @@ memmove(void *vdst, const void *vsrc, int n)
     *dst++ = *src++;
   return vdst;
 }
+
+int thread_create(void (*start_routine)(void *, void *), void * arg1, void * arg2)
+{
+
+  void * stack;
+  lock_t lk;
+  lock_init(&lk);
+  lock_acquire(&lk);
+  stack = malloc(PGSIZE);
+  lock_release(&lk);
+  return clone(start_routine, arg1, arg2, stack);
+}
+
+int thread_join()
+{
+  void * stackPtr = malloc(sizeof(void*));
+  int x = join(&stackPtr);
+  lock_t lk;
+  lock_init(&lk);
+  lock_acquire(&lk);
+  free(stackPtr);
+  lock_release(&lk);
+  return x;
+}
+

@@ -281,7 +281,9 @@ wait(void)
     // Scan through table looking for exited children.
     havekids = 0;
     for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
-      if(p->parent != curproc)
+      //if the process is not a child of the the current running process
+      //or if p is a thread, then we dont handle it in wait() but with join()
+      if(p->parent != curproc || p->pgdir == curproc->pgdir )
         continue;
       havekids = 1;
       if(p->state == ZOMBIE){
@@ -532,3 +534,106 @@ procdump(void)
     cprintf("\n");
   }
 }
+
+//creates a new kernel thread that shares the address space of calling process
+//the thread uses stack as its user stack
+//the stack is passed 2 parameters : arg1 and arg2 and a fake return PC : 0Xffffffff
+//the thread starts executing at fcn
+int clone(void(*fcn)(void*,void*), void *arg1, void *arg2, void* stack)
+{
+  struct proc *np;
+  struct proc *p = myproc();
+  // Allocate process.
+  if((np = allocproc()) == 0)
+    return -1;
+
+  // Copy process data to the new thread
+  np->pgdir = p->pgdir;
+  np->sz = p->sz;
+  //set the current process as the parent of created thread
+  np->parent = p;
+  *np->tf = *p->tf;
+
+  void *sArg1, *sArg2, *sRet;
+  //the stack is PGSIZE long, and it starts with
+  //Parameter #N
+  //Parameter #N-1
+
+  //Parameter #1
+  //Return Address (fake PC) <-- esp
+  sRet = stack + PGSIZE -3*sizeof(void *);
+  *(uint*)sRet = 0xFFFFFFFF;
+
+  sArg1 = stack + PGSIZE -2*sizeof(void *);
+  *(uint*)sArg1 = (uint)arg1;
+
+  sArg2 = stack + PGSIZE - sizeof(void *);
+  *(uint*)sArg2 = (uint)arg2;
+
+//  np->tf->esp = (uint) stack;
+  np->tf->eax = 0;
+  np->threadstack = stack;
+
+  np->tf->esp = (uint)stack + PGSIZE -3*sizeof(void*) ;
+  np->tf->ebp = np->tf->esp;
+  np->tf->eip = (uint) fcn;
+
+  int i;
+  for(i = 0; i < NOFILE; i++)
+    if(p->ofile[i])
+      np->ofile[i] = filedup(p->ofile[i]);
+  np->cwd = idup(p->cwd);
+
+  np->state = RUNNABLE;
+
+  safestrcpy(np->name, p->name, sizeof(p->name));
+  return np->pid;
+}
+
+//wait for a child thread to complete
+int
+join(void** stack)
+{
+  struct proc *p;
+  int havekids, pid;
+  struct proc *cp = myproc();
+  acquire(&ptable.lock);
+  for(;;){
+      havekids = 0;
+      for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
+
+      if(p->parent != cp || p->pgdir != p->parent->pgdir)
+        continue;
+
+      havekids=1;
+      if(p->state == ZOMBIE){
+        pid = p->pid;
+        kfree(p->kstack);
+        p->kstack = 0;
+
+        // Reseting thread from the process table
+        p->pid = 0;
+        p->parent = 0;
+        p->name[0] = 0;
+        p->killed = 0;
+        p->state = UNUSED;
+        stack = p->threadstack;
+        p->threadstack = 0;
+
+        release(&ptable.lock);
+        return pid;
+      }
+
+    }
+
+    // No point waiting if we don't have any children.
+    if(!havekids || cp->killed){
+      release(&ptable.lock);
+      return -1;
+    }
+
+    // Wait for children to exit.  (See wakeup1 call in proc_exit.)
+    sleep(cp, &ptable.lock);  //DOC: wait-sleep
+  }
+}
+
