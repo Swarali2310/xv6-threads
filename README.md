@@ -4,15 +4,24 @@ Adding support for kernel threads in xv6
 
 ### Problem
 
-Adding threads to xv6 Operating System using following system calls
+Adding threads to xv6 Operating System using following system calls :
+
 i) clone() -- used for thread creation
+
 ii) join() -- wait for a thread completion
 
-Building a small thread library atop the system calls
+
+
+Building a small thread library atop the system calls :
+
 i) thread_create()
+
 ii) thread_join()
+
 iii) lock_init()
+
 iv) lock_acquire()
+
 v) lock_release()
 
 ### Solution
